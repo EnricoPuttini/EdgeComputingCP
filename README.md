@@ -79,7 +79,7 @@ Manter as **condições ideais de armazenamento de vinhos** é crucial para pres
 
 🔗 Simule o projeto no Wokwi:
 
-[![Simular no Wokwi]([https://img.shields.io/badge/Simular%20no-Wokwi-green?style=for-the-badge&logo=wokwi&logoColor=white](https://wokwi.com/projects/431407540931396609))](https://wokwi.com/)  
+[![Simular no Wokwi]([https://img.shields.io/badge/Simular%20no-Wokwi-green?style=for-the-badge&logo=wokwi&logoColor=white](https://wokwi.com/projects/431407540931396609))](](https://wokwi.com/projects/431407540931396609))  
 
 
 ---
