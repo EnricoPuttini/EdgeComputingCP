@@ -1,0 +1,221 @@
+#include <LiquidCrystal_I2C.h>     // Biblioteca para controlar display LCD com interface I2C
+#include <RTClib.h>                // Biblioteca para utilizar módulo de relógio em tempo real (RTC)
+#include <Wire.h>                  // Biblioteca para comunicação I2C
+#include <EEPROM.h>                // Biblioteca para leitura/gravação na memória EEPROM
+#include "DHT.h"                   // Biblioteca para sensor de temperatura e umidade DHT
+
+// Definição dos pinos conectados aos sensores e atuadores
+const int sensorLDR = A0;          // Pino analógico para sensor de luminosidade (LDR)
+const int sensorDHT = 2;           // Pino digital para sensor DHT22
+const int pinoPIR = 4;             // Pino digital para sensor de movimento PIR
+const int buzzer = 12;             // Pino do buzzer (alarme sonoro)
+const int ledVerde = 8;            // LED verde (condição normal)
+const int ledAmarelo = 9;          // LED amarelo (atenção)
+const int ledVermelho = 10;        // LED vermelho (alerta)
+
+#define LOG_OPTION 1               // Define se o log está ativado (não utilizado diretamente)
+#define SERIAL_OPTION 1            // Define se os dados serão exibidos via serial
+#define UTC_OFFSET -3              // Fuso horário para ajuste de tempo (ex: -3 para Brasília)
+
+#define DHTPIN 2                   // Define o pino do DHT
+#define DHTTYPE DHT22              // Define o tipo do sensor DHT como DHT22
+DHT dht(DHTPIN, DHTTYPE);          // Cria objeto do tipo DHT
+
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Inicializa LCD com endereço I2C 0x27 e tamanho 16x2
+RTC_DS1307 RTC;                     // Cria objeto para manipular o RTC DS1307
+
+// Configuração da EEPROM
+const int maxRecords = 80;          // Número máximo de registros que cabem na EEPROM
+const int recordSize = 10;          // Cada registro ocupa 10 bytes (4 tempo, 2 temp, 2 umid, 2 luz)
+int currentAddress = 0;             // Endereço atual na EEPROM para gravação
+
+// Limites de temperatura e umidade para acionamento do log
+float trigger_t_min = 20.0;
+float trigger_t_max = 30.0;
+float trigger_u_min = 30.0;
+float trigger_u_max = 60.0;
+
+int lastLoggedMinute = -1;          // Armazena o último minuto registrado
+
+// Criação de caracteres personalizados para animações no LCD
+byte vinhoCima[8] = {
+  B00100,
+  B11111,
+  B11111,
+  B11111,
+  B11111,
+  B01110,
+  B00100,
+  B00100
+};
+
+byte vinhoBaixo[8] = {
+  B00100,
+  B00100,
+  B00100,
+  B00100,
+  B00100,
+  B00100,
+  B01110,
+  B11111
+};
+
+// Avança o endereço para o próximo registro ou reinicia do zero se atingir o limite
+void getNextAddress() {
+  currentAddress += recordSize;
+  if (currentAddress >= maxRecords * recordSize) {
+    currentAddress = 0;
+  }
+}
+
+// Função que grava os dados na EEPROM convertendo floats para inteiros (duas casas decimais)
+void logToEEPROM(uint32_t timestamp, float temperatura, float umidade, int luz) {
+  int tempInt = (int)(temperatura * 100);
+  int humiInt = (int)(umidade * 100);
+  int luzInt = luz;
+
+  EEPROM.put(currentAddress, timestamp);
+  EEPROM.put(currentAddress + 4, tempInt);
+  EEPROM.put(currentAddress + 6, humiInt);
+  EEPROM.put(currentAddress + 8, luzInt);
+
+  getNextAddress();
+}
+
+// Configurações iniciais do sistema
+void setup() {
+  pinMode(buzzer, OUTPUT);
+  pinMode(ledVerde, OUTPUT);
+  pinMode(ledAmarelo, OUTPUT);
+  pinMode(ledVermelho, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);        // LED onboard do Arduino
+  pinMode(pinoPIR, INPUT);             // PIR como entrada
+
+  Serial.begin(9600);                  // Inicia comunicação Serial
+  lcd.begin(16, 2);                    // Inicia LCD 16x2
+  lcd.clear();
+
+  dht.begin();                         // Inicia o sensor DHT
+  RTC.begin();                         // Inicia o RTC
+  RTC.adjust(DateTime(F(__DATE__), F(__TIME__))); // Ajusta o RTC com o horário da compilação
+
+  lcd.createChar(1, vinhoCima);        // Carrega taça parte superior
+  lcd.createChar(2, vinhoBaixo);       // Carrega taça parte inferior
+
+  // Animações iniciais simulando contagem regressiva e explosão
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("BOMBA ATIVADA");
+  lcd.setCursor(0, 1);
+  lcd.print("ExplosaoIminente");
+  delay(1000);
+  lcd.clear();
+
+  lcd.setCursor(0, 0); lcd.print("3"); delay(1000); lcd.clear();
+  lcd.setCursor(8, 0); lcd.print("2"); delay(1000); lcd.clear();
+  lcd.setCursor(15, 0); lcd.print("1"); delay(1000); lcd.clear();
+
+  for (int i = 0; i < 3; i++) {
+    lcd.setCursor(4, 0);
+    lcd.print("BOOM!");
+    delay(200);
+    lcd.clear();
+    delay(200);
+  }
+
+  // Mostra nome e saudação
+  lcd.setCursor(4, 0); lcd.print("Dev");
+  lcd.setCursor(3, 1); lcd.print("Prime");
+  lcd.setCursor(15, 0); lcd.write(byte(1)); // parte de cima da taça
+  lcd.setCursor(15, 1); lcd.write(byte(2)); // parte de baixo da taça
+  delay(2000);
+  lcd.clear();
+
+  lcd.setCursor(3, 0); lcd.print("Desejamos");
+  lcd.setCursor(2, 1); lcd.print("Boas Vindas :)");
+  delay(2000);
+  lcd.clear();
+}
+
+// Loop principal do programa
+void loop() {
+  DateTime now = RTC.now();                      // Obtém a hora atual do RTC
+  int offsetSeconds = UTC_OFFSET * 3600;         // Converte UTC para segundos
+  now = now.unixtime() + offsetSeconds;          // Aplica o fuso horário
+  DateTime adjustedTime = DateTime(now);         // Cria objeto ajustado
+
+  float umidade = dht.readHumidity();            // Lê umidade
+  float temperatura = dht.readTemperature();     // Lê temperatura
+  int leituraLDR = analogRead(sensorLDR);        // Lê valor do LDR
+  int luz = map(leituraLDR, 1023, 0, 0, 100);     // Converte leitura para porcentagem
+
+  // Executa uma vez por minuto
+  if (adjustedTime.minute() != lastLoggedMinute) {
+    lastLoggedMinute = adjustedTime.minute();
+
+    digitalWrite(LED_BUILTIN, HIGH); delay(100); digitalWrite(LED_BUILTIN, LOW); // Pisca LED onboard
+
+    // Verifica se algum valor ultrapassou os limites definidos
+    bool foraDosLimites =
+      temperatura < trigger_t_min || temperatura > trigger_t_max ||
+      umidade < trigger_u_min || umidade > trigger_u_max ||
+      luz > 30;
+
+    if (foraDosLimites) {
+      logToEEPROM(now.unixtime(), temperatura, umidade, luz); // Grava os dados na EEPROM
+    }
+
+    if (SERIAL_OPTION) {
+      Serial.print("Log [");
+      Serial.print(adjustedTime.day()); Serial.print("/");
+      Serial.print(adjustedTime.month()); Serial.print("/");
+      Serial.print(adjustedTime.year()); Serial.print(" ");
+      Serial.print(adjustedTime.hour()); Serial.print(":");
+      Serial.print(adjustedTime.minute()); Serial.print("] - ");
+      Serial.print("Temp: "); Serial.print(temperatura, 1); Serial.print(" C | ");
+      Serial.print("Umid: "); Serial.print(umidade, 1); Serial.print(" % | ");
+      Serial.print("Luz: "); Serial.print(luz); Serial.println(" %");
+    }
+  }
+
+  int movimento = digitalRead(pinoPIR); // Lê presença de movimento
+
+  if (movimento == HIGH) {
+    lcd.backlight(); // Liga o LCD
+    lcd.setCursor(0, 0); lcd.print("Luz:"); lcd.print(luz); lcd.print("%  ");
+    lcd.setCursor(9, 0); lcd.print("T:"); lcd.print(temperatura, 1); lcd.print("C ");
+    lcd.setCursor(0, 1); lcd.print("U:"); lcd.print(umidade, 1); lcd.print("% ");
+    lcd.setCursor(9, 1);
+    lcd.print(adjustedTime.hour() < 10 ? "0" : ""); lcd.print(adjustedTime.hour());
+    lcd.print(":");
+    lcd.print(adjustedTime.minute() < 10 ? "0" : ""); lcd.print(adjustedTime.minute());
+  } else {
+    lcd.noBacklight(); // Desliga LCD quando não há movimento
+  }
+
+  // Verifica se os valores estão fora da faixa ideal (para vinho, por exemplo)
+  int sensoresFora = 0;
+  if (temperatura < 13 || temperatura > 14) sensoresFora++;
+  if (umidade < 60 || umidade > 80) sensoresFora++;
+  if (luz > 30) sensoresFora++;
+
+  // Aciona LEDs e buzzer com base na gravidade
+  if (sensoresFora == 0) {
+    digitalWrite(ledVerde, HIGH);
+    digitalWrite(ledAmarelo, LOW);
+    digitalWrite(ledVermelho, LOW);
+    noTone(buzzer);
+  } else if (sensoresFora == 1) {
+    digitalWrite(ledVerde, LOW);
+    digitalWrite(ledAmarelo, HIGH);
+    digitalWrite(ledVermelho, LOW);
+    noTone(buzzer);
+  } else {
+    digitalWrite(ledVerde, LOW);
+    digitalWrite(ledAmarelo, LOW);
+    digitalWrite(ledVermelho, HIGH);
+    tone(buzzer, 1000);     // Alarme sonoro
+    delay(3000);
+    noTone(buzzer);
+  }
+}
