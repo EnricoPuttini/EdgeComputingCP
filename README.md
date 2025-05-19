@@ -93,5 +93,6 @@ Manter as **condições ideais de armazenamento de vinhos** é crucial para pres
 
 ---
 
-## 📂 Organização do Projeto
+## 📂 Projeto
 
+![Captura de tela 2025-05-19 174133](https://github.com/user-attachments/assets/528b29d8-6144-41b4-bf89-8cdb18999040)
